@@ -1,0 +1,14 @@
+﻿@using BmoKids.Components.Pages
+
+<Router AppAssembly="typeof(Program).Assembly">
+    <Found Context="routeData">
+        <RouteView RouteData="routeData" />
+        <FocusOnNavigate RouteData="routeData" Selector="h1" />
+    </Found>
+
+    <NotFound>
+        <p style="padding:20px; font-size:20px; color:#888;">
+            الصفحة غير موجودة
+        </p>
+    </NotFound>
+</Router>

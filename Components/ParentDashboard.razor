@@ -1,0 +1,187 @@
+﻿@using BmoKids.Models
+@using BmoKids.Services
+@using BmoKids.Services.LocalStorage
+@inject DataStorageService DataService
+@inject IJSRuntime JS
+
+<div class="parent-dashboard-overlay" @onclick="HandleOverlayClick">
+    <div class="dashboard-content" @onclick:stopPropagation="true">
+        <div class="dashboard-header">
+            <h2>📊 بيانات @ChildData?.Name</h2>
+            <button class="close-btn" @onclick="CloseAsync">✕</button>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon">📚</div>
+                <div class="stat-value">@ChildData?.Sessions</div>
+                <div class="stat-label">جلسات</div>
+            </div>
+
+            <div class="stat-card success">
+                <div class="stat-icon">✅</div>
+                <div class="stat-value">@ChildData?.Correct</div>
+                <div class="stat-label">إجابات صحيحة</div>
+            </div>
+
+            <div class="stat-card error">
+                <div class="stat-icon">❌</div>
+                <div class="stat-value">@ChildData?.Wrong</div>
+                <div class="stat-label">إجابات خاطئة</div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon">🎯</div>
+                <div class="stat-value">@successRate%</div>
+                <div class="stat-label">نسبة النجاح</div>
+            </div>
+        </div>
+
+        <div class="recent-activity">
+            <h3>آخر الأنشطة</h3>
+            <div class="activity-list">
+                @if (ChildData?.Events != null)
+                {
+                    @foreach (var evt in ChildData.Events.OrderByDescending(e => e.Timestamp).Take(10))
+                    {
+                        <div class="activity-item @GetEventClass(evt)">
+                            <span class="activity-icon">@GetEventIcon(evt)</span>
+                            <span class="activity-text">@GetEventDescription(evt)</span>
+                            <span class="activity-time">@GetEventTime(evt)</span>
+                        </div>
+                    }
+                }
+                else
+                {
+                    <p class="no-data">لا توجد أنشطة بعد</p>
+                }
+            </div>
+        </div>
+
+        <div class="dashboard-actions">
+            <button class="btn-secondary" @onclick="ExportDataAsync">📤 تصدير البيانات</button>
+            <button class="btn-danger" @onclick="ShowResetConfirmation">🗑️ مسح البيانات</button>
+        </div>
+
+        @if (showResetConfirm)
+        {
+            <div class="confirmation-dialog">
+                <p>هل أنت متأكد من مسح كل البيانات؟</p>
+                <button class="btn-danger" @onclick="ResetDataAsync">نعم، امسح</button>
+                <button class="btn-secondary" @onclick="() => showResetConfirm = false">إلغاء</button>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public ChildData? ChildData { get; set; }
+
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    private bool showResetConfirm = false;
+    private int successRate => ChildData != null && (ChildData.Correct + ChildData.Wrong) > 0
+        ? (int)((ChildData.Correct * 100.0) / (ChildData.Correct + ChildData.Wrong))
+        : 0;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await JS.InvokeVoidAsync("BmoKids.speak",
+                $"هعرضلك بيانات {ChildData?.Name}. عدد الجلسات {ChildData?.Sessions}، إجابات صحيحة {ChildData?.Correct}، إجابات خاطئة {ChildData?.Wrong}",
+                "ar-EG",
+                0.95,
+                1.0);
+        }
+    }
+
+    private async Task CloseAsync()
+    {
+        await OnClose.InvokeAsync();
+    }
+
+    private void HandleOverlayClick()
+    {
+        // يمكن إغلاق عند الضغط على الخلفية
+        // await OnClose.InvokeAsync();
+    }
+
+    private string GetEventClass(LearningEvent evt)
+    {
+        return evt.Type switch
+        {
+            "attempt" => evt.Correct == true ? "success" : "error",
+            _ => ""
+        };
+    }
+
+    private string GetEventIcon(LearningEvent evt)
+    {
+        return evt.Type switch
+        {
+            "name" => "👤",
+            "choice" => "🎯",
+            "attempt" => evt.Correct == true ? "✅" : "❌",
+            _ => "📝"
+        };
+    }
+
+    private string GetEventDescription(LearningEvent evt)
+    {
+        return evt.Type switch
+        {
+            "name" => $"تسجيل الاسم: {evt.Value}",
+            "choice" => $"اختيار القسم: {evt.Value}",
+            "attempt" => $"{(evt.Correct == true ? "أجاب صح" : "أجاب خطأ")} على: {evt.Item}",
+            _ => evt.Type
+        };
+    }
+
+    private string GetEventTime(LearningEvent evt)
+    {
+        var time = DateTimeOffset.FromUnixTimeMilliseconds(evt.Timestamp);
+        var diff = DateTimeOffset.UtcNow - time;
+
+        if (diff.TotalMinutes < 1)
+            return "الآن";
+        if (diff.TotalHours < 1)
+            return $"{(int)diff.TotalMinutes} د";
+        if (diff.TotalDays < 1)
+            return $"{(int)diff.TotalHours} س";
+
+        return $"{(int)diff.TotalDays} يوم";
+    }
+
+    private async Task ExportDataAsync()
+    {
+        if (ChildData == null) return;
+
+        var json = System.Text.Json.JsonSerializer.Serialize(ChildData,
+            new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+
+        await JS.InvokeVoidAsync("BmoKids.downloadFile",
+            $"bmo-data-{ChildData.Name}-{DateTime.Now:yyyyMMdd}.json",
+            json);
+    }
+
+    private void ShowResetConfirmation()
+    {
+        showResetConfirm = true;
+    }
+
+    private async Task ResetDataAsync()
+    {
+        await DataService.ClearDataAsync();
+        await JS.InvokeVoidAsync("BmoKids.speak",
+            "تم مسح البيانات بنجاح",
+            "ar-EG",
+            0.95,
+            1.0);
+
+        await Task.Delay(2000);
+        await JS.InvokeVoidAsync("location.reload");
+    }
+}

@@ -1,0 +1,163 @@
+﻿@page "/"
+@using BmoKids.Models
+@using BmoKids.Services
+@using BmoKids.Services.LocalStorage
+@inject DataStorageService DataService
+@inject SpeechService SpeechService
+@inject AssessmentService AssessmentService
+@inject IJSRuntime JS
+@rendermode InteractiveServer
+
+<PageTitle>BMO Care</PageTitle>
+
+<div class="bmo-container">
+    @if (currentState == AppState.Welcome)
+    {
+        <WelcomeScreen OnReady="HandleWelcomeComplete" />
+    }
+    else if (currentState == AppState.AskingName)
+    {
+        <NameInput OnNameReceived="HandleNameReceived" />
+    }
+    else if (currentState == AppState.SelectingSection)
+    {
+        <SectionSelector ChildName="@childData?.Name" OnSectionSelected="HandleSectionSelected" />
+    }
+    else if (currentState == AppState.Learning)
+    {
+        <LearningSession 
+            Section="@selectedSection" 
+            ChildData="@childData" 
+            OnSessionComplete="HandleSessionComplete" />
+    }
+    else if (currentState == AppState.ParentDashboard)
+    {
+        <ParentDashboard ChildData="@childData" OnClose="HandleDashboardClose" />
+    }
+
+    <BMOFace MouthState="@currentMouthState" />
+    
+    @if (showParentButton)
+    {
+        <button class="parent-access-btn" @onclick="ShowParentDashboard">
+            👤 ولي الأمر
+        </button>
+    }
+</div>
+
+@code {
+    private enum AppState
+    {
+        Welcome,
+        AskingName,
+        SelectingSection,
+        Learning,
+        ParentDashboard
+    }
+
+    private AppState currentState = AppState.Welcome;
+    private MouthState currentMouthState = MouthState.Neutral;
+    private ChildData? childData;
+    private LearningSection selectedSection = LearningSection.None;
+    private bool showParentButton = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // تحميل البيانات المحفوظة
+        childData = await DataService.LoadDataAsync();
+        
+        if (childData != null && !string.IsNullOrEmpty(childData.Name))
+        {
+            // لدينا طفل مسجل، انتقل مباشرة لاختيار القسم
+            currentState = AppState.SelectingSection;
+            showParentButton = true;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // تهيئة الاستماع الخلفي للوالد
+            await JS.InvokeVoidAsync("BmoKids.initParentListener", 
+                DotNetObjectReference.Create(this));
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnParentCommand(string command)
+    {
+        if (command.Contains("بيانات") || command.Contains("عايزة"))
+        {
+            await ShowParentDashboard();
+        }
+    }
+
+    private void HandleWelcomeComplete()
+    {
+        currentState = AppState.AskingName;
+        StateHasChanged();
+    }
+
+    private async Task HandleNameReceived(string name)
+    {
+        if (childData == null)
+        {
+            childData = new ChildData
+            {
+                Name = name,
+                Sessions = 1,
+                Events = new List<LearningEvent>
+                {
+                    new LearningEvent
+                    {
+                        Type = "name",
+                        Value = name,
+                        Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                    }
+                }
+            };
+        }
+        else
+        {
+            childData.Sessions++;
+        }
+
+        await DataService.SaveDataAsync(childData);
+        currentState = AppState.SelectingSection;
+        showParentButton = true;
+        StateHasChanged();
+    }
+
+    private void HandleSectionSelected(LearningSection section)
+    {
+        selectedSection = section;
+        currentState = AppState.Learning;
+        StateHasChanged();
+    }
+
+    private void HandleSessionComplete()
+    {
+        currentState = AppState.SelectingSection;
+        StateHasChanged();
+    }
+
+    private async Task ShowParentDashboard()
+    {
+        currentState = AppState.ParentDashboard;
+        StateHasChanged();
+        await Task.CompletedTask;
+    }
+
+    private void HandleDashboardClose()
+    {
+        currentState = AppState.SelectingSection;
+        StateHasChanged();
+    }
+
+    public void UpdateMouthState(MouthState state)
+    {
+        currentMouthState = state;
+        StateHasChanged();
+    }
+}

@@ -1,0 +1,171 @@
+﻿@using BmoKids.Services
+@using BmoKids.Services.LocalStorage
+@inject IJSRuntime JS
+@inject SpeechService SpeechService
+
+<div class="name-input-screen">
+    <div class="speech-indicator @(isListening ? "active" : "")">
+        <div class="pulse"></div>
+        <p>@statusMessage</p>
+    </div>
+
+    @if (showConfirmation && !string.IsNullOrEmpty(detectedName))
+    {
+        <div class="confirmation-box">
+            <h2>سمعت اسمك: @detectedName</h2>
+            <p>ده اسمك الصح؟</p>
+            <button class="btn-yes" @onclick="ConfirmName">نعم ✓</button>
+            <button class="btn-no" @onclick="RetryName">لأ، أعيد تاني</button>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public EventCallback<string> OnNameReceived { get; set; }
+
+    private bool isListening = false;
+    private string statusMessage = "استنى شوية...";
+    private string detectedName = "";
+    private bool showConfirmation = false;
+    private int attemptCount = 0;
+    private double lastConfidence = 0;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await StartNameRecognition();
+        }
+    }
+
+    private async Task StartNameRecognition()
+    {
+        attemptCount++;
+
+        // نطق السؤال
+        await JS.InvokeVoidAsync("BmoKids.speak",
+            "ممكن أعرف اسمك؟ قول اسمك بصوت واضح يا بطل.",
+            "ar-EG",
+            0.95,
+            1.0);
+
+        await Task.Delay(4000); // انتظار انتهاء النطق
+
+        statusMessage = "اتكلم دلوقتي...";
+        isListening = true;
+        StateHasChanged();
+
+        try
+        {
+            // بدء التعرف على الصوت
+            var result = await JS.InvokeAsync<string>("BmoKids.recognizeSpeech", "ar-EG", 5000);
+
+            if (!string.IsNullOrEmpty(result))
+            {
+                await ProcessNameResult(result);
+            }
+            else
+            {
+                await HandleNoResult();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Speech recognition error: {ex.Message}");
+            await HandleNoResult();
+        }
+        finally
+        {
+            isListening = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ProcessNameResult(string result)
+    {
+        // محاكاة استخراج الاسم والثقة
+        detectedName = SpeechService.ExtractName(result);
+        lastConfidence = 0.7; // في الواقع سيأتي من API
+
+        if (lastConfidence >= 0.6)
+        {
+            // قبول مباشر
+            await AcceptName();
+        }
+        else if (lastConfidence >= 0.4)
+        {
+            // طلب تأكيد
+            showConfirmation = true;
+            await JS.InvokeVoidAsync("BMOCare.speak",
+                $"سمعت {detectedName}؟ لو ده اسمك قول نعم، ولو لأ قول اسمك تاني.",
+                "ar-EG",
+                0.95,
+                1.0);
+        }
+        else
+        {
+            await HandleLowConfidence();
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task HandleNoResult()
+    {
+        if (attemptCount < 2)
+        {
+            await JS.InvokeVoidAsync("BmoKids.speak",
+                "ماسمعتكش كويس، قول اسمك بصوت أوضح",
+                "ar-EG",
+                0.95,
+                1.0);
+
+            await Task.Delay(3000);
+            await StartNameRecognition();
+        }
+        else
+        {
+            statusMessage = "عذراً، حاول تاني لاحقاً";
+        }
+    }
+
+    private async Task HandleLowConfidence()
+    {
+        if (attemptCount < 2)
+        {
+            await JS.InvokeVoidAsync("BmoKids.speak",
+                "ماسمعتكش كويس، قول اسمك بصوت أوضح",
+                "ar-EG",
+                0.95,
+                1.0);
+
+            await Task.Delay(3000);
+            await StartNameRecognition();
+        }
+    }
+
+    private async Task ConfirmName()
+    {
+        await AcceptName();
+    }
+
+    private async Task RetryName()
+    {
+        showConfirmation = false;
+        detectedName = "";
+        await StartNameRecognition();
+    }
+
+    private async Task AcceptName()
+    {
+        await JS.InvokeVoidAsync("BmoKids.speak",
+            $"تشرفت بيك يا {detectedName}! جاهز نبدأ؟",
+            "ar-EG",
+            0.95,
+            1.0);
+
+        await Task.Delay(3000);
+        await OnNameReceived.InvokeAsync(detectedName);
+    }
+}

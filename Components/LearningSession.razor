@@ -1,0 +1,331 @@
+﻿@using BmoKids.Models
+@using BmoKids.Services
+@using BmoKids.Services.LocalStorage
+@inject IJSRuntime JS
+@inject AssessmentService AssessmentService
+@inject DataStorageService DataService
+@inject SpeechService SpeechService
+
+<div class="learning-session">
+    <div class="progress-bar">
+        <div class="progress-fill" style="width: @progressPercentage%"></div>
+        <span class="progress-text">@currentIndex / @lessonItems.Count</span>
+    </div>
+
+    @if (currentItem != null)
+    {
+        <div class="lesson-item @(isCorrect ? "correct" : "") @(isWrong ? "wrong" : "")">
+            <div class="item-display">
+                <h1 class="item-value">@currentItem.DisplayText</h1>
+            </div>
+
+            @if (isListening)
+            {
+                <div class="listening-indicator">
+                    <div class="pulse"></div>
+                    <p>اتكلم دلوقتي...</p>
+                </div>
+            }
+
+            @if (!string.IsNullOrEmpty(feedbackMessage))
+            {
+                <div class="feedback @feedbackClass">
+                    @feedbackMessage
+                </div>
+            }
+        </div>
+    }
+
+    <div class="stats-mini">
+        <span class="stat-correct">✓ @ChildData.Correct</span>
+        <span class="stat-wrong">✗ @ChildData.Wrong</span>
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public LearningSection Section { get; set; }
+
+    [Parameter]
+    public ChildData? ChildData { get; set; }
+
+    [Parameter]
+    public EventCallback OnSessionComplete { get; set; }
+
+    private List<LessonItem> lessonItems = new();
+    private LessonItem? currentItem;
+    private int currentIndex = 0;
+    private int attemptCount = 0;
+    private bool isListening = false;
+    private bool isCorrect = false;
+    private bool isWrong = false;
+    private string feedbackMessage = "";
+    private string feedbackClass = "";
+    private double progressPercentage => lessonItems.Count > 0 ? (currentIndex * 100.0 / lessonItems.Count) : 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        LoadLessonItems();
+
+        if (lessonItems.Any())
+        {
+            currentItem = lessonItems[0];
+            await Task.Delay(500);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && currentItem != null)
+        {
+            await TeachCurrentItem();
+        }
+    }
+
+    private void LoadLessonItems()
+    {
+        lessonItems = Section switch
+        {
+            LearningSection.English => AssessmentService.GetEnglishLetters(),
+            LearningSection.Arabic => AssessmentService.GetArabicLetters(),
+            LearningSection.Sports => AssessmentService.GetNumbers(),
+            _ => new List<LessonItem>()
+        };
+    }
+
+    private async Task TeachCurrentItem()
+    {
+        if (currentItem == null) return;
+
+        attemptCount = 0;
+        isCorrect = false;
+        isWrong = false;
+        feedbackMessage = "";
+
+        // عرض العنصر لمدة 3 ثوان
+        await Task.Delay(3000);
+
+        // نطق التعليم
+        await JS.InvokeVoidAsync("BmoKids.speak",
+            currentItem.TeachingText,
+            currentItem.Language,
+            0.95,
+            1.0);
+
+        await Task.Delay(3000);
+
+        // بدء الاستماع
+        await ListenForAnswer();
+    }
+
+    private async Task ListenForAnswer()
+    {
+        attemptCount++;
+        isListening = true;
+        StateHasChanged();
+
+        try
+        {
+            var result = await JS.InvokeAsync<string>("BmoKids.recognizeSpeech",
+                currentItem?.Language ?? "ar-EG",
+                3500);
+
+            await ProcessAnswer(result);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Recognition error: {ex.Message}");
+            await HandleRecognitionError();
+        }
+        finally
+        {
+            isListening = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ProcessAnswer(string transcript)
+    {
+        if (string.IsNullOrEmpty(transcript) || currentItem == null)
+        {
+            await HandleNoAnswer();
+            return;
+        }
+
+        // محاكاة نتيجة التعرف
+        var recognitionResult = new RecognitionResult
+        {
+            Transcript = transcript,
+            Confidence = 0.75,
+            Alternatives = new List<RecognitionAlternative>
+            {
+                new RecognitionAlternative { Transcript = transcript, Confidence = 0.75 }
+            }
+        };
+
+        bool correct = SpeechService.EvaluateAnswer(recognitionResult, currentItem, ChildData?.Settings.Age ?? 6);
+
+        if (correct)
+        {
+            await HandleCorrectAnswer();
+        }
+        else
+        {
+            await HandleWrongAnswer();
+        }
+    }
+
+    private async Task HandleCorrectAnswer()
+    {
+        isCorrect = true;
+        feedbackMessage = "براڤو! ممتاز! 🎉";
+        feedbackClass = "success";
+
+        if (ChildData != null)
+        {
+            ChildData.Correct++;
+            await DataService.AddEventAsync(ChildData, new LearningEvent
+            {
+                Type = "attempt",
+                Item = currentItem?.Value,
+                Correct = true,
+                Confidence = 0.75,
+                AttemptIndex = attemptCount
+            });
+        }
+
+        await JS.InvokeVoidAsync("BmoKids.speak",
+            "براڤو! ممتاز! قلوب لياكي",
+            "ar-EG",
+            0.95,
+            1.0);
+
+        await JS.InvokeVoidAsync("BmoKids.playSuccessSound");
+
+        await Task.Delay(2000);
+        await MoveToNextItem();
+    }
+
+    private async Task HandleWrongAnswer()
+    {
+        isWrong = true;
+        feedbackMessage = "مش كده، نجرب تاني 💪";
+        feedbackClass = "error";
+
+        await JS.InvokeVoidAsync("BmoKids.speak",
+            "مش كده، نجرب تاني",
+            "ar-EG",
+            0.95,
+            1.0);
+
+        await Task.Delay(2000);
+
+        if (attemptCount < 2)
+        {
+            // محاولة ثانية
+            isWrong = false;
+            feedbackMessage = "";
+            StateHasChanged();
+            await ListenForAnswer();
+        }
+        else
+        {
+            // بعد محاولتين، أعط تلميح وانتقل
+            if (ChildData != null)
+            {
+                ChildData.Wrong++;
+                await DataService.AddEventAsync(ChildData, new LearningEvent
+                {
+                    Type = "attempt",
+                    Item = currentItem?.Value,
+                    Correct = false,
+                    AttemptIndex = attemptCount
+                });
+            }
+
+            await GiveHintAndMove();
+        }
+    }
+
+    private async Task GiveHintAndMove()
+    {
+        await JS.InvokeVoidAsync("BmoKids.speak",
+            $"الصح هو: {currentItem?.TeachingText}",
+            currentItem?.Language ?? "ar-EG",
+            0.85,
+            1.0);
+
+        await Task.Delay(3000);
+        await MoveToNextItem();
+    }
+
+    private async Task HandleNoAnswer()
+    {
+        if (attemptCount < 2)
+        {
+            feedbackMessage = "ماسمعتكش، جرب تاني";
+            await JS.InvokeVoidAsync("BmoKids.speak",
+                "ماسمعتكش، جرب تاني",
+                "ar-EG",
+                0.95,
+                1.0);
+
+            await Task.Delay(2000);
+            feedbackMessage = "";
+            StateHasChanged();
+            await ListenForAnswer();
+        }
+        else
+        {
+            await GiveHintAndMove();
+        }
+    }
+
+    private async Task HandleRecognitionError()
+    {
+        feedbackMessage = "في مشكلة، نجرب تاني";
+        StateHasChanged();
+        await Task.Delay(2000);
+
+        if (attemptCount < 2)
+        {
+            await ListenForAnswer();
+        }
+        else
+        {
+            await MoveToNextItem();
+        }
+    }
+
+    private async Task MoveToNextItem()
+    {
+        isCorrect = false;
+        isWrong = false;
+        feedbackMessage = "";
+        currentIndex++;
+
+        if (currentIndex < lessonItems.Count)
+        {
+            currentItem = lessonItems[currentIndex];
+            StateHasChanged();
+            await Task.Delay(600);
+            await TeachCurrentItem();
+        }
+        else
+        {
+            await CompleteSession();
+        }
+    }
+
+    private async Task CompleteSession()
+    {
+        await JS.InvokeVoidAsync("BmoKids.speak",
+            $"ممتاز يا {ChildData?.Name}! خلصنا الدرس. عملت {ChildData?.Correct} صح!",
+            "ar-EG",
+            0.95,
+            1.0);
+
+        await Task.Delay(4000);
+        await OnSessionComplete.InvokeAsync();
+    }
+}

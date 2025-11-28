@@ -1,0 +1,70 @@
+﻿@using BmoKids.Models
+@inject IJSRuntime JS
+
+<div class="section-selector">
+    <h2 class="greeting">أهلاً @ChildName! 👋</h2>
+    <p class="question">تحب تعمل إيه النهاردة؟</p>
+
+    <div class="sections-grid">
+        <button class="section-btn english" @onclick="() => SelectSection(LearningSection.English)">
+            <span class="icon">🔤</span>
+            <span class="label">إنجليزي</span>
+        </button>
+
+        <button class="section-btn arabic" @onclick="() => SelectSection(LearningSection.Arabic)">
+            <span class="icon">أ</span>
+            <span class="label">عربي</span>
+        </button>
+
+        <button class="section-btn sports" @onclick="() => SelectSection(LearningSection.Sports)">
+            <span class="icon">🏃</span>
+            <span class="label">رياضة</span>
+        </button>
+
+        <button class="section-btn chat" @onclick="() => SelectSection(LearningSection.Chat)">
+            <span class="icon">💬</span>
+            <span class="label">نتكلم</span>
+        </button>
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public string? ChildName { get; set; }
+
+    [Parameter]
+    public EventCallback<LearningSection> OnSectionSelected { get; set; }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await JS.InvokeVoidAsync("BmoKids.speak",
+                "تحب تعمل إيه النهاردة؟ اتلمس لون الموضوع اللي بتحبه: إنجليزي، عربي، رياضة، أو نتكلم.",
+                "ar-EG",
+                0.95,
+                1.0);
+        }
+    }
+
+    private async Task SelectSection(LearningSection section)
+    {
+        string sectionName = section switch
+        {
+            LearningSection.English => "إنجليزي",
+            LearningSection.Arabic => "عربي",
+            LearningSection.Sports => "رياضة",
+            LearningSection.Chat => "نتكلم",
+            _ => ""
+        };
+
+        await JS.InvokeVoidAsync("BmoKids.speak",
+            $"اخترت {sectionName}. عايز نبدأ دلوقتي؟",
+            "ar-EG",
+            0.95,
+            1.0);
+
+        await Task.Delay(2500);
+        await OnSectionSelected.InvokeAsync(section);
+    }
+}

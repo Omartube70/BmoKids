@@ -1,0 +1,36 @@
+﻿@inject IJSRuntime JS
+
+<div class="welcome-screen">
+    <div class="bmo-logo">
+        <h1>🤖 BMO</h1>
+        <p class="subtitle">صديقك في التعلم</p>
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public EventCallback OnReady { get; set; }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // الانتظار 600ms ثم إظهار الوجه
+            await Task.Delay(600);
+
+            // الانتظار 1000ms ثم تشغيل التحية الصوتية
+            await Task.Delay(400);
+
+            await JS.InvokeVoidAsync("BmoKids.speak",
+                "أهلاً! أنا BMO، صديقك الجديد اللي هيساعدك تتعلم بطريقة ممتعة!",
+                "ar-EG",
+                0.95,
+                1.0);
+
+            // الانتظار حتى انتهاء التحية (حوالي 5 ثواني)
+            await Task.Delay(5000);
+
+            await OnReady.InvokeAsync();
+        }
+    }
+}
